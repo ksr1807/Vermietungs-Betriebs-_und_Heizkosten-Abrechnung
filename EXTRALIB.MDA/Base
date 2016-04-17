@@ -1,0 +1,882 @@
+Option Compare Database
+Option Explicit
+
+Const BlockSize = 8192
+Const DEF_DDE_TIMEOUT = 30
+Const DT_OpenOffice = 5
+Const DT_Word6 = 2
+Const DT_Word95 = 3
+Global Const DT_Word97 = 4
+Global Const et = "S" '("und")...Benennung v.tmp.Tabellen u.tmp.DateiNam.endgn.
+Global Const UNION = " UNION SELECT "
+Global debugging%
+
+Function AccessHandle& ()
+On Error GoTo AccessHandleA
+
+Dim hWnd&
+hWnd = GetActiveWindow()
+While GetWindowClass(hWnd) <> "OMain"
+  hWnd = GetParent(hWnd)
+Wend
+AccessHandle = hWnd
+
+Exit Function
+AccessHandleA:
+If Err = 28 Then
+  End'Stapelspeicher voll
+ Else
+  MsgError "", "AccessHandle"
+  Exit Function
+End If
+End Function
+
+Sub clean ()
+Dim i%, d As Database
+
+DeleteTable "Einfügefehler"
+i = DelAttachedTables("")
+
+Set d = DBEngine(0)(0)
+d.QueryDefs.Refresh
+For i = 0 To d.QueryDefs.Count - 1
+  On Error Resume Next'momentan geöffnete ignorieren
+  DoCmd DeleteObject A_QUERY, d.QueryDefs(i).Name
+  On Error GoTo 0
+Next
+
+cleanMSys A_FORM
+cleanMSys A_REPORT
+
+'Ansicht(Listen) aktualisieren
+DoCmd SelectObject A_MACRO, "AutoExec", -1
+DoCmd SelectObject A_TABLE, d.Tabledefs(0).Name, -1
+DoCmd Minimize
+
+End Sub
+
+Private Sub cleanMSys (t%)
+Dim o$, v$
+Do
+  v = o
+  o = VToS(DLookup("Name", "MSysObjects", "Type=-3276" & IIf(t = A_FORM, "8", "4")))
+  If o = "" Or o = v Then Exit Do
+  If SysCmd(SysCmd_GetObjectState, t, o) = 0 Then DoCmd DeleteObject t, o
+Loop
+End Sub
+
+Sub CreateQuerySpecial (Nam$, SQL$)
+Dim d As Database, q As QueryDef
+Set d = DBEngine(0)(0)
+d.QueryDefs.Refresh
+If ExistObject_inDB(A_QUERY, Nam, "") Then d.QueryDefs.Delete Nam
+DeleteTable Nam
+Set q = d.CreateQueryDef(Nam, SQL)
+d.QueryDefs.Refresh
+End Sub
+
+Function CreateTable% (tmpDB As Database, tbl$, ByVal IdxFlds$, Aggr$, ByVal SQL$)
+Dim d As Database, ok%, t$
+Const u = "U"
+t = "T"
+Set d = DBEngine(0)(0)
+
+SQL = IIf(Aggr > "", "TRANSFORM " & Aggr, "") & "SELECT " & SQL
+CreateQuerySpecial t, SQL
+If ExistObject_inDB(A_TABLE, tbl, VToS(tmpDB.Name)) Then tmpDB.Execute "drop table[" & tbl & "]"
+
+If SQL Like "*" & UNION & "*" Then
+  tmpDB.Execute "select * into[" & tbl & "]from " & t & " in '" & d.Name & "'"
+ Else
+  CreateQuerySpecial u, SQL
+  DoCmd RunSQL "select * into[" & tbl & "]in'" & tmpDB.Name & "'from " & u
+  d.QueryDefs.Delete u
+End If
+d.QueryDefs.Delete t
+
+While IdxFlds <> "" 'müssen mit , getrennt übergeben werden
+  t = DevideString_WithTrunc(IdxFlds, ",")
+  tmpDB.Execute "create index IDX" & t & " on[" & tbl & "](" & t & ")"
+Wend
+
+ok = AttachAccessTable(tbl, VToS(tmpDB.Name))
+CreateTable = sbaStep()
+End Function
+
+Function CreateTbl% (d As Database, Nam$, SQL$)
+CreateTbl = CreateTable(d, Nam & et, "", "", SubstituteAll(SQL, "$", Nam))
+End Function
+
+Sub Datenmodell (d As Database)
+Dim ok%, n$
+openDB0 d, "", n
+ok = ShellExec(n & ".png", "")
+End Sub
+
+Function debugMode% (click%)
+If Not click Then
+  debugging = False
+ ElseIf Not SysCmd(SYSCMD_RUNTIME) Then
+  debugging = Not debugging
+  MsgInfo "Debug-Modus ist nun " & IIf(debugging, "EIN", "AUS") & "geschaltet."
+End If
+End Function
+
+Sub DeleteTable (t$)
+Dim d As Database
+Set d = DBEngine(0)(0)
+If ExistObject_inDB(A_TABLE, t, VToS(d.Name)) Then d.Execute "drop table [" & t & "]"
+End Sub
+
+Function EUR$ (v)
+EUR = Round_WithPos_FxLen(VToD(v), 2) & " EUR"
+End Function
+
+Private Sub iDDEExec (ddech, cmd$)
+  Dim t&
+  On Error GoTo ERR_iDDEExec
+  
+  t = GetTickCount()
+  If Len(cmd) > 240 Then
+      MsgStop "Das DDE-Kommando ist zu lang (" & Len(cmd) & " Zeichen) und kann nicht ausgeführt werden." & CRn(2) & cmd
+  Else
+      DDEExecute ddech, cmd
+  End If
+  cmd = ""
+  Exit Sub
+
+ERR_iDDEExec:
+  If (ocTickDiff(t) < 10000) And (Err >= 280) And (Err <= 298) Then 'mind. 10 Sekunden warten und auf DDE-Fehler filtern
+    DoEvents 'Nicht OcDoEvents, da dann der Fehler verschwindet
+    Resume
+   Else 'Fehler wieder auslösen und Error-Handler
+    On Error GoTo 0
+    Resume
+  End If
+End Sub
+
+Private Function irtfTxt$ (Txt$)
+  Dim i%
+  
+  i = InStr(Txt, "\")
+  While i > 0
+      Txt = Left$(Txt, i) & "\" & Right$(Txt, Len(Txt) - i)
+      i = InStr(i + 2, Txt, "\")
+  Wend
+  
+  i = InStr(Txt, "}")
+  While i > 0
+      Txt = Left$(Txt, i - 1) & "\" & Right$(Txt, Len(Txt) - i + 1)
+      i = InStr(i + 2, Txt, "}")
+  Wend
+  
+  i = InStr(Txt, "{")
+  While i > 0
+      Txt = Left$(Txt, i - 1) & "\" & Right$(Txt, Len(Txt) - i + 1)
+      i = InStr(i + 2, Txt, "{")
+  Wend
+  
+  i = InStr(1, Txt, Chr(9), 0)
+  While i > 0
+      Txt = Left$(Txt, i - 1) & "\tab " & Right$(Txt, Len(Txt) - i)
+      i = InStr(i + 5, Txt, Chr(9), 0)
+  Wend
+  
+  Txt = SubstituteAll(Txt, Chr(13) & Chr(10), "\line ")
+  Txt = SubstituteAll(Txt, Chr(13), "\line ")
+  irtfTxt = Txt
+End Function
+
+Private Function isqlExport% (SQL$, fnlong$, outFieldList$, rtf%)
+'if rtf=0 -> csv-Export
+  Dim DB As Database, rs As Recordset
+
+  Dim f%, i%, Lin$, cnt&, Header$, fopen%, fnShort$, aVal, expArt$
+  Dim fldSize&, Start&, Chr13End%
+
+  On Error GoTo ERR_SqlExport
+
+  Const CSVFieldDelim = ","
+  expArt = IIf(rtf, "RTF", "CSV") & "-Export"
+
+  Set DB = DBEngine(0)(0)
+  Set rs = DB.OpenRecordset(SQL)
+  If Not rs.eof Then
+    rs.MoveLast
+    rs.MoveFirst
+  End If
+  cnt = rs.recordcount
+  
+  fnShort = ocCreateOrReplaceFileLong(fnlong, expArt)
+  If fnShort = "" Then Exit Function
+  
+  f = FreeFile
+  Open fnShort For Output As #f
+  i = sbainit(expArt, cnt)
+  fopen = True
+  cnt = 0
+  
+  If rtf Then
+    Print #f, "{\rtf\ansi \pard \plain"  'header
+    Print #f, "{\trowd"                  'table header
+  End If
+  
+  outFieldList = ""
+  Header = "{"
+  For i = 0 To rs.Fields.Count - 1
+    If rtf Then
+      Header = Header & irtfTxt(CStr(rs(i).Name)) & "\cell "
+      Lin = Lin & "\cellx " & Cr()
+     Else
+      Lin = InsString(Lin, icsvTxt(CStr(rs(i).Name)), CSVFieldDelim)
+    End If
+    outFieldList = outFieldList & StrEntry(rs(i).Name)
+  Next i
+  If rtf Then
+    Print #f, Lin & "\intbl"
+    Print #f, Header & "\row}"
+   Else
+    Print #f, Lin
+  End If
+
+  Do While Not rs.eof
+    If rtf Then
+      Lin = "{"
+      For i = 0 To rs.Fields.Count - 1
+        If rs(i).Type = DB_MEMO Then
+          Print #f, Lin;
+          Lin = ""
+            
+          fldSize = rs(i).FieldSize()
+          Start = 0
+          Do
+            aVal = rs(i).GetChunk(Start, BlockSize)
+            If Chr13End Then
+              If VBEqual(Left(aVal, 1), Chr(10)) Then aVal = LeftDel(CStr(aVal), 1)
+            End If
+            Chr13End = VBEqual(Right(aVal, 1), Chr(13))
+            Print #f, irtfTxt(CStr(aVal));
+            Start = Start + BlockSize
+          Loop Until Start >= fldSize
+            
+          Print #f, "\cell ";
+         Else
+          aVal = rs(i)
+          If IsNull(aVal) Then
+            Lin = Lin & "\cell "
+           Else
+            Lin = Lin & irtfTxt(CStr(aVal)) & "\cell "
+          End If
+        End If
+      Next i
+      Lin = Lin & "\row}"
+     Else
+      Lin = ""
+      For i = 0 To rs.Fields.Count - 1
+        If rs(i).Type = DB_MEMO Then
+          Print #f, Lin;
+          Lin = ""
+            
+          fldSize = rs(i).FieldSize()
+          If fldSize > 0 Then
+            Print #f, """";
+            
+            Start = 0
+            Do
+              aVal = rs(i).GetChunk(Start, BlockSize)
+              aVal = icsvTxt(CStr(aVal))
+              Print #f, Mid(aVal, 2, Len(aVal) - 2);
+              Start = Start + BlockSize
+            Loop Until Start >= fldSize
+            Print #f, """";
+          End If
+         Else
+          aVal = rs(i)
+          If Not IsNull(aVal) Then
+            Lin = Lin & icsvTxt(CStr(aVal))
+          End If
+        End If
+        If i < rs.Fields.Count - 1 Then Lin = Lin & CSVFieldDelim
+      Next i
+    End If
+    Print #f, Lin
+    cnt = cnt + 1
+    If cnt / 10 = cnt \ 10 Then
+      If Not sbaupdate(cnt) Then
+        cnt = 0
+        Exit Do
+      End If
+    End If
+    rs.MoveNext
+  Loop
+  rs.Close
+  If rtf Then
+    Print #f, "}"
+    Print #f, "}"
+  End If
+  Close #f
+  sbaDone
+  
+  isqlExport = cnt
+  Exit Function
+
+ERR_SqlExport:
+  If fopen Then Close #f
+  If Err >= 50 And Err <= 76 Then
+    MsgStop expArt & ":" & CRn(2) & "Die Datei '" & fnShort & "' kann nicht erzeugt werden." & Cr() & "(" & Error & " [" & Err & "])"
+   Else
+    MsgError "", "sqlExport"
+  End If
+  If fopen Then sbaDone
+  Exit Function
+End Function
+
+Private Function itxtDDEClo% (ddech, DocType%, FileName$, save%, Question$)
+  Dim res$, tmp$, Nam$, ext$, Befehl$
+  On Error GoTo ERR_itxtDDECloseFile
+  
+  If DocType = DT_OpenOffice Then
+     iDDEExec ddech, "[InitTopics]"
+  End If
+  
+  res = VToS(DDERequest(ddech, "Topics"))
+  Do While res <> ""
+     tmp = DevideString_WithTrunc(res, Chr(9))
+     If tmp = FileName Then
+        If Question <> "" Then
+           Question = SubstituteAll(Question, "|", FileName)
+           Select Case MsgBox(Question)
+              Case ID_YES: save = 1
+              Case ID_NO: save = 2
+              Case Else: Exit Function
+           End Select
+         Else
+           save = IIf(save, 1, 2)
+        End If
+        
+        fnsplit FileName, "", Nam, ext
+        If DocType = DT_Word97 Then
+          ext = itxtWordCompatExt(Nam, ext)
+        End If
+        Select Case DocType
+           Case DT_Word6, DT_Word95: Befehl = "[Aktivieren """ & Nam & ext & """][DateiSchließen " & save & "]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[Activate """ & Nam & ext & """][FileClose " & save & "]"
+        End Select
+        iDDEExec ddech, Befehl
+        Exit Do
+     End If
+  Loop
+  itxtDDEClo = True
+  Exit Function
+
+ERR_itxtDDECloseFile:
+  MsgError "", "itxtDDECloseFile"
+  Exit Function
+End Function
+
+Private Function itxtOpenFile (fn$)
+itxtOpenFile = fn
+fn = ocGetShortPathName(fn)
+If FileExist(fn) Then Kill fn
+End Function
+
+Private Function itxtOutFile$ (DocFile$, FileExt$)
+Dim p$, n$, e$
+fnsplit DocFile, p, n, e
+If IsRight(e, FileExt) Then n = Left(n, 7) & "_"
+itxtOutFile = UCase(fnmerge(p, n, FileExt))
+End Function
+
+Private Function itxtWordCompatExt$ (Nam$, ext$)
+  Dim Title$, le%, hWnd%, NamExt$
+  On Error GoTo ERR_itxtWordCompatExt
+
+  itxtWordCompatExt = ext
+  NamExt = Nam & ext
+  hWnd = GetTopWindow(0)
+  While hWnd <> 0
+    If IsWindowVisible(hWnd) Then
+      Title = Space(256)
+      le = GetWindowText(hWnd, Title, Len(Title))
+      If (le > 0) Then
+        Title = Left(Title, le)
+        If IsLeft(Title, NamExt & " [") Then
+          le = InStr(Len(NamExt) + 2, Title, "]")
+          If le > 0 Then
+            itxtWordCompatExt = ext & Mid$(Title, Len(NamExt) + 1, le - Len(NamExt))
+            Exit Function
+          End If
+        ElseIf IsLeft(Title, Nam & " [") Then
+          le = InStr(Len(Nam) + 2, Title, "]")
+          If le > 0 Then
+            itxtWordCompatExt = Mid$(Title, Len(Nam) + 1, le - Len(Nam))
+            Exit Function
+          End If
+        End If
+      End If
+    End If
+    hWnd = GetNextWindow(hWnd, 2) '2 = GW_HWNDNEXT
+  Wend
+  Exit Function
+
+ERR_itxtWordCompatExt:
+  MsgError "", "itxtWordCompatExt"
+  Exit Function
+End Function
+
+Private Sub itxtWordDDEExport (we As WordExportStruct, Register%, Rec&)
+  Dim ddech, Befehl$, tmp$, Nam$, ext$, rw, Info$, outFldList$, t&, TryCnt%
+  Dim DateSrc#, DateDst#, Datafile$, NewName$, DDETimeOut%, NewDDETimeOut&, KeepDDETimeOut&
+  Dim Start&, DDEServer$
+
+  On Error GoTo ERR_WordDDEExport
+  
+  Info = "Octoware-Word 1.37 DDE" & Cr() & "Quelle - " & we.DocFile
+  Register = False  'Dokument nicht registrieren
+  Rec = 0           'keine Datensätze exportiert
+  Start = GetTickCount()
+
+  If we.DocType < DT_Word6 Or we.DocType > DT_OpenOffice Then
+     MsgStop "Der ausgewählte Vorlagentyp wird momentan noch nicht unterstützt."
+     Exit Sub
+  End If
+  
+  If we.SQL = "" Then
+     MsgStop "Ungültiger Aufruf von WordExport. Keine Abfrage angegeben."
+     Exit Sub
+  End If
+  
+  If we.DocFile = "" Then
+     MsgStop "Ungültiger Aufruf von WordExport. Keine Dokumentvorlage angegeben."
+     Exit Sub
+  End If
+
+  DDEServer = IIf(we.DocType = DT_OpenOffice, "OcDdeOO", "Winword")
+  Application.SetOption OLE_DDE_Timeout, DEF_DDE_TIMEOUT
+
+  On Error Resume Next
+  ddech = DDEInitiate(DDEServer, "System")
+  
+  If Err <> 0 Then
+     If we.WordFileName = "" Then
+        MsgStop "Das Textverarbeitungsprogramm ist nicht richtig konfiguriert."
+        Exit Sub
+     Else
+        On Error GoTo ERR_WordDDEExport
+        rw = ShellExec(we.WordFileName, "open")
+        DoEvents
+        If rw < 0 Or rw > 32 Then
+           On Error Resume Next
+           Do
+              DDETerminateAll
+              ddech = DDEInitiate(DDEServer, "System")
+              If Err = 0 Then Exit Do
+              TryCnt = TryCnt + 1
+              Debug.Print TryCnt; Err; Error
+              If TryCnt >= 20 Then Exit Do
+              t = GetTickCount()
+              While ocTickDiff(t) < 500: DoEvents: Wend
+           Loop
+           If Err <> 0 Then
+              ddech = True   'zur Erkennung
+              GoTo ERR_WordDDEExport
+           End If
+        Else
+           Exit Sub
+        End If
+     End If
+  End If
+  On Error GoTo ERR_WordDDEExport
+
+  If Not FileExist(we.DocFile) Then
+     rw = accActivate()
+     Datafile = itxtOutFile(we.DocFile, IIf(we.DocType = DT_OpenOffice, "csv", "rtf"))
+     
+     If FileExist(Datafile) Then
+        On Error Resume Next
+        Kill ocGetShortPathName(Datafile)
+        On Error GoTo ERR_WordDDEExport
+     End If
+     
+     If isqlExport(we.SQL, Datafile, outFldList, we.DocType <> DT_OpenOffice) Then
+        DDETimeOut = VToL(Application.GetOption(OLE_DDE_Timeout))
+        If Rec > 10 Then NewDDETimeOut = Rec * 3 Else NewDDETimeOut = DDETimeOut
+        If we.OpenTimeout > NewDDETimeOut Then NewDDETimeOut = we.OpenTimeout
+        If DDETimeOut <> NewDDETimeOut Then
+           Application.SetOption OLE_DDE_Timeout, MinL(NewDDETimeOut, 300)
+        End If
+
+        wrdActivate we.DocType, ddech
+        
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[DateiNeu][SeriendruckÖffnenDatenQuelle .Name=""" & Datafile & """, .UmwandlungBestätigen=1][DateiSpeichernUnter .Name=""" & we.DocFile & """, .ZuletztBearbErweitern=" & IIf(we.AddToHist, 1, 0) & "]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileNew][MailMergeOpenDataSource .Name=""" & Datafile & """, .ConfirmConversions=1][FileSaveAs .Name=""" & we.DocFile & """, .AddToMru=" & IIf(we.AddToHist, 1, 0) & "]"
+        End Select
+        iDDEExec ddech, Befehl
+        
+        Select Case we.DocType
+           Case DT_Word6: Befehl = "[DateiDateiInfo .Titel = """ & we.Name & """, .Betreff = ""Archiv"", .Stichwörter = ""Octoware, Archiv," & we.BaseTable & """]"
+           Case DT_Word95: Befehl = "[DateiDateiInfo .Titel = """ & we.Name & """, .Thema = ""Archiv"", .Stichwörter = ""Octoware, Archiv," & we.BaseTable & """]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileSummaryInfo .Title = """ & we.Name & """, .Subject = ""Archiv"", .Keywords = ""Octoware, Archiv," & we.BaseTable & """]"
+        End Select
+        iDDEExec ddech, Befehl
+        
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[DateiDateiInfo .Kommentar = """ & Info & """]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileSummaryInfo .Comments = """ & Info & """]"
+        End Select
+        iDDEExec ddech, Befehl
+           
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[Unterstrichen 1][Schriftgrad 14][Einfügen ""Seriendruckfelder""][Schriftgrad 12][Unterstrichen 0][EinfügenAbsatz][EinfügenAbsatz]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[Underline 1][FontSize 14][Insert ""Seriendruckfelder""][FontSize 12][Underline 0][InsertPara][InsertPara]"
+        End Select
+        iDDEExec ddech, Befehl
+        
+        While outFldList <> ""
+           tmp = DevideBinary(outFldList)
+           Select Case we.DocType
+              Case DT_Word6, DT_Word95: Befehl = "[Kursiv 1][Einfügen """ & tmp & ":""+Chr$(9)+Chr$(9)][Kursiv 0][Fett 1][EinfügenSeriendruckFeld .SeriendruckFeld=""" & tmp & """, .Bedingungsfeld=True][Fett 0][EinfügenAbsatz]"
+              Case DT_Word97, DT_OpenOffice: Befehl = "[Italic 1][Insert """ & tmp & ":""+Chr$(9)+Chr$(9)][Italic 0][Bold 1][InsertMergeField .MergeField=""" & tmp & """, .WordField=True][Bold 0][InsertPara]"
+           End Select
+           iDDEExec ddech, Befehl
+        Wend
+           
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[EinfügenAbsatz][Einfügen ""Bitte ändern Sie diese Vorlage nach Ihren Wünschen.""][SeriendruckAnsichtDaten 1][DateiSpeichern]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[InsertPara][Insert ""Bitte ändern Sie diese Vorlage nach Ihren Wünschen.""][MailMergeViewData 1][FileSave]"
+        End Select
+        iDDEExec ddech, Befehl
+
+        rw = accActivate()
+        MsgBox "Die Seriendruckdatei '" & we.DocFile & "' wurde erfolgreich erstellt." & CRn(2) & "Sie kann jetzt mit " & IIf(we.DocType = DT_OpenOffice, "OpenOffice.org", "Microsoft Word") & " weiterbearbeitet werden."
+        wrdActivate we.DocType, ddech
+     Else
+        If Rec = 0 Then MsgBox "Es wurden keine Datensätze für den Export gefunden. Es wurde keine neue Vorlage erstellt."
+     End If
+     
+     GoTo Exit_CloseDDE
+  End If
+  
+  If we.DocDestinDir <> "" Then
+     fnsplit we.DocFile, "", Nam, ext
+     NewName = fnmerge(we.DocDestinDir, Nam, ext)
+     
+     DateSrc = FileDate(we.DocFile)
+     DateDst = FileDate(NewName)
+     
+     If DateDst = 0 Or Abs(DateDiff("s", DateDst, DateSrc)) > 2 Then
+        If Not itxtDDEClo(ddech, we.DocType, NewName, False, "") Then
+           GoTo Exit_CloseDDE
+        End If
+        
+        If Not ocCopyFile(we.DocFile, NewName, True) Then
+           GoTo Exit_CloseDDE
+        End If
+     End If
+     we.DocFile = NewName  'Neuen Namen zuweisen
+  End If
+  
+  Datafile = itxtOutFile(we.DocFile, IIf(we.DocType = DT_OpenOffice, "csv", "rtf"))
+  If Not itxtDDEClo(ddech, we.DocType, we.DocFile, -1, "") Then GoTo Exit_CloseDDE
+  If Not itxtDDEClo(ddech, we.DocType, Datafile, False, "") Then GoTo Exit_CloseDDE
+  If we.NewDocName <> "" Then If Not itxtDDEClo(ddech, we.DocType, we.NewDocName, False, "") Then GoTo Exit_CloseDDE
+  rw = accActivate()
+  If FileExist(Datafile) Then If DeleteFileWithWait(Datafile, "Die Steuerdatei '" & Datafile & "' kann nicht mit der Vorlage '" & we.DocFile & "' verbunden werden, da sie sich im Zugriff befindet.") <> 0 Then GoTo Exit_CloseDDE
+
+  If isqlExport(we.SQL, Datafile, outFldList, we.DocType <> DT_OpenOffice) Then
+     DDETimeOut = VToL(Application.GetOption(OLE_DDE_Timeout))
+     If Rec > 10 Then NewDDETimeOut = Rec * 3 Else NewDDETimeOut = DDETimeOut
+     If we.OpenTimeout > NewDDETimeOut Then NewDDETimeOut = we.OpenTimeout
+     If DDETimeOut <> NewDDETimeOut Then
+        Application.SetOption OLE_DDE_Timeout, MinL(NewDDETimeOut, 300)
+     End If
+     
+     wrdActivate we.DocType, ddech
+     
+     Select Case we.DocType
+        Case DT_Word6, DT_Word95: Befehl = "[DateiÖffnen .Name = """ & we.DocFile & """]"
+        Case DT_Word97, DT_OpenOffice: Befehl = "[FileOpen .Name = """ & we.DocFile & """]"
+     End Select
+     iDDEExec ddech, Befehl
+     
+     Select Case we.DocType
+        Case DT_Word6, DT_Word95: Befehl = "[SeriendruckÖffnenDatenQuelle .Name=""" & Datafile & """, .UmwandlungBestätigen=1]"
+        Case DT_Word97, DT_OpenOffice: Befehl = "[MailMergeOpenDataSource .Name=""" & Datafile & """, .ConfirmConversions=1]"
+     End Select
+     iDDEExec ddech, Befehl
+        
+     If we.NewDocName = "" Then
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[SeriendruckAnsichtDaten 1]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[MailMergeViewData 1]"
+        End Select
+        iDDEExec ddech, Befehl
+     End If
+        
+     If we.NewDocName <> "" Then
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[SeriendruckInDokument]"
+           Case DT_Word97: Befehl = "[MailMergeToDoc]"
+           Case DT_OpenOffice
+             fnsplit GetDBFileName(), tmp, "", ""
+             Befehl = "[MailMergeToDoc .TempDir = """ & tmp & "TEMP" & """]"
+        End Select
+        iDDEExec ddech, Befehl
+     
+        Select Case we.DocType
+           Case DT_Word6: Befehl = "[DateiDateiInfo .Titel = """ & we.Name & " (Kopie)"", .Betreff = ""Archiv"", .Stichwörter = ""Octoware,Archiv," & we.BaseTable & """]"
+           Case DT_Word95: Befehl = "[DateiDateiInfo .Titel = """ & we.Name & " (Kopie)"", .Thema = ""Archiv"", .Stichwörter = ""Octoware,Archiv," & we.BaseTable & """]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileSummaryInfo .Title = """ & we.Name & " (Kopie)"", .Subject = ""Archiv"", .Keywords = ""Octoware,Archiv," & we.BaseTable & """]"
+        End Select
+        iDDEExec ddech, Befehl
+        
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[DateiDateiInfo .Kommentar = """ & Info & """]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileSummaryInfo .Comments = """ & Info & """]"
+        End Select
+        iDDEExec ddech, Befehl
+
+        If we.NewDocName <> "<Neues Dokument>" Then
+          Select Case we.DocType
+             Case DT_Word6, DT_Word95: Befehl = "[DateiSpeichernUnter .Name=""" & we.NewDocName & """, .ZuletztBearbErweitern=" & IIf(we.AddToHist, 1, 0) & IIf(IsRight(we.NewDocName, ".rtf"), ", .Format=6", "") & "]"
+             Case DT_Word97, DT_OpenOffice: Befehl = "[FileSaveAs .Name=""" & we.NewDocName & """, .AddToMru=" & IIf(we.AddToHist, 1, 0) & IIf(IsRight(we.NewDocName, ".rtf"), ", .Format=6", "") & "]"
+          End Select
+          iDDEExec ddech, Befehl
+        End If
+
+        fnsplit we.DocFile, "", Nam, ext
+        If we.DocType = DT_Word97 Then
+          ext = itxtWordCompatExt(Nam, ext)
+        End If
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[Aktivieren """ & Nam & ext & """][DateiSchließen 2]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[Activate """ & Nam & ext & """][FileClose 2]"
+        End Select
+        iDDEExec ddech, Befehl
+     End If
+     
+     If we.PrintOnly Then
+        If we.NewDocName = "" Then
+           Select Case we.DocType
+              Case DT_Word6, DT_Word95: Befehl = "[WW2_SeriendruckAnDrucker]"
+              Case DT_Word97, DT_OpenOffice: Befehl = "[WW2_PrintMergeToPrinter]"
+           End Select
+           
+           'Hier den Timeout hochsetzen, da der Druckdialog hochkommt
+           KeepDDETimeOut = VToL(Application.GetOption(OLE_DDE_Timeout))
+           Application.SetOption OLE_DDE_Timeout, 300
+           iDDEExec ddech, Befehl
+           Application.SetOption OLE_DDE_Timeout, KeepDDETimeOut
+        
+        Else
+           Select Case we.DocType
+              Case DT_Word6, DT_Word95: Befehl = "[DateiDrucken .Exemplare=" & we.NumCopies & "]"
+              Case DT_Word97, DT_OpenOffice: Befehl = "[FilePrint .NumCopies=" & we.NumCopies & "]"
+           End Select
+           iDDEExec ddech, Befehl
+        End If
+        
+        Select Case we.DocType
+           Case DT_Word6, DT_Word95: Befehl = "[DateiDateiInfo .Aktualisieren][DateiSchließen 1]"
+           Case DT_Word97, DT_OpenOffice: Befehl = "[FileSummaryInfo .Update][FileClose 1]"
+        End Select
+        iDDEExec ddech, Befehl
+
+        rw = accActivate()
+     End If
+  Else
+     If Rec = 0 Then MsgBox "Es wurden keine Datensätze für die Übergabe zur Textverarbeitung gefunden."
+     GoTo Exit_CloseDDE
+  End If
+  
+  Register = True
+
+Exit_CloseDDE:
+  Application.SetOption OLE_DDE_Timeout, DEF_DDE_TIMEOUT
+  DDETerminate ddech
+  DDETerminateAll
+  Exit Sub
+
+ERR_WordDDEExport:
+  tmp = Error & " [" & Err & "] (" & Befehl & ")"
+  tmp = tmp & ";Timeout=" & Application.GetOption(OLE_DDE_Timeout) & ";Handle=" & VToS(ddech)
+  
+  rw = accActivate()
+  MsgStop "WordDDEExport:" & CRn(2) & tmp
+  
+  Application.SetOption OLE_DDE_Timeout, DEF_DDE_TIMEOUT
+
+  DDETerminateAll
+
+  Exit Sub
+End Sub
+
+Private Function itxtWordFile$ (DocType%)
+  Dim CLSID$, S$, le&, hKey&
+  Const ERROR_SUCCESS = 0
+  Const HKEY_CLASSES_ROOT = 1
+
+  If DocType = DT_OpenOffice Then
+     itxtWordFile = fnmerge(SysCmd(SYSCMD_ACCESSDIR), "OcDdeOO", "exe")
+     Exit Function
+  End If
+
+  Select Case DocType
+    Case DT_Word6: CLSID = "CLSID\{00020900-0000-0000-C000-000000000046}\LocalServer"
+    Case DT_Word95: CLSID = "CLSID\{00020900-0000-0000-C000-000000000046}\LocalServer32"
+    Case DT_Word97: CLSID = "CLSID\{00020906-0000-0000-C000-000000000046}\LocalServer32"
+    Case Else: Exit Function
+  End Select
+  
+  If RegOpenKey(HKEY_CLASSES_ROOT, CLSID, hKey) = ERROR_SUCCESS Then
+     S = Space$(100)
+     le = 100
+     If RegQueryValue(hKey, 0&, S, le) = ERROR_SUCCESS Then
+        S = Left$(S, le - 1)
+        If IsLeft(S, """") And IsRight(S, """") Then S = Mid$(S, 2, Len(S) - 2)
+        itxtWordFile = S
+     End If
+     RegCloseKey hKey
+  End If
+End Function
+
+Function MaxD# (l1#, l2#)
+If l1 > l2 Then MaxD = l1 Else MaxD = l2
+End Function
+
+Sub openDB0 (d As Database, p$, n$)
+fnsplit d.Name, p, n, ""
+End Sub
+
+Sub openDBs (d() As Database)
+Dim n$
+openDB0 d(0), "", n
+n = n & "." & et
+On Error Resume Next
+Kill n
+Set d(1) = DBEngine(0).CreateDatabase(n, DB_LANG_GENERAL)
+Set d(1) = DBEngine(0).OpenDatabase(n, -1)
+On Error GoTo 0
+End Sub
+
+Function Round_WithPos_FxLen$ (Value, afterDP%)
+Round_WithPos_FxLen = Format(Round_WithPos(VToD(Value), afterDP), "0" & IIf(afterDP, ".", "") & String(afterDP, "0"))
+End Function
+
+Function RoundOpt$ (i, d%)
+Dim t$
+t = Round_WithPos_FxLen(i, d)
+If t Like "*,*0[1-6]" Then t = Round_WithPos_FxLen(RightDel(t, 1), d)
+If t Like "*,*9[4-9]" Then t = Round_WithPos_FxLen(RightDel(t, 1) & "99", d)
+While t Like "*,*0" Or t Like "*,"
+  t = RightDel(t, 1)
+Wend
+RoundOpt = t
+End Function
+
+Function RoundTo# (v#, r#)
+If r = 0 Then
+  RoundTo = v
+ Else
+  RoundTo = Round_WithPos(v / r, 0) * r
+End If
+End Function
+
+Function sbaStep% ()
+Static c&
+If IsLoaded("@ScrollbarAbort") Then
+  If Not sbaupdate(c) Then sbaStep = True '=Abbruch
+  c = c + 1
+ Else
+  c = 1
+End If
+End Function
+
+Function SelectItemPre (DisplayField$, KeyField$, ByVal ATable$, Where$, OrderBy$, Caption$, ItemNr%)
+  Dim SQL$, ok%, f As Form, c As Control, n$
+  
+  SQL = sqlAssembleSelect(DisplayField & "," & KeyField, ATable & " IN '" & GetDBFileName() & "'", Where, OrderBy)
+  
+  Select Case DomCount(SQL)
+   Case 0
+    MsgStop "Es sind keine Einträge verfügbar!"
+   Case 1
+    SelectItemPre = DLookup(KeyField, ATable, Where)
+   Case Else
+    ok = InitModalDialogReturn()
+    n = "@SelItemForm"
+    DoCmd OpenForm n
+    Set f = forms(n)
+    If Caption <> "" Then f.Caption = Caption
+    Set c = f.ListBox
+    If Not VEqual(c.RowSource, SQL) Then c.RowSource = SQL
+    If c.ListCount > 0 Then c = c.ItemData(ItemNr)
+    c.SetFocus
+    DoCmd Hourglass 0
+  
+    While IsInUse(n): DoEvents: Wend
+
+    If GetModalDialogReturn() = ID_OK Then SelectItemPre = GetModalDialogReturnValue(1): ItemNr = GetModalDialogReturnValue(2)
+    ok = InitModalDialogReturn()
+  End Select
+End Function
+
+Function Start% ()
+Dim d As Database, n$, ok%
+Set d = DBEngine(0)(0)
+n = d.Containers("Modules").Documents(0).Name
+ok = sbainit(n & " wird gestartet", 2)
+ok = sbaupdate(1)
+SetWindowText GetAccess_hWnd(), n
+ok = debugMode(0)
+ok = sbaupdate(2)
+DoCmd OpenForm "@Menu"
+sbaDone
+clean
+zz_Prepare
+End Function
+
+Sub txtPrepareAndOpenSpecial (Task$, SQL$, DocType%, DesMode%)
+  Dim DocTypeTxt$, tmp$, Msg$, ok%, ext$, p$, WORKAROUND_1016B
+  Dim RegSQL$, RegTable$, Register%, Rec&, OptID$, UnValidDoc%, n$, e$, ShortPathName$
+  Dim ASK_REG_ARCHI%, Reg%, RegFileName$, RegFileType$
+  Dim we As WordExportStruct
+  On Error GoTo ERR_txtPrepareAndOpen
+  
+  DoCmd Hourglass True
+  fnsplit GetDBFileName(), p, "", ""
+  ext = IIf(DocType = DT_OpenOffice, ".odt", ".doc")
+  we.Name = Task
+  we.DocFile = p & Task & ext
+  we.DocType = DocType
+  DocTypeTxt = Choose(DocType, "Word Autom.", "Word 6", "Word 95", "Word 97", "Open Office")
+  we.WordFileName = itxtWordFile(we.DocType)
+  we.SQL = SQL
+  If Not DesMode Then we.NewDocName = itxtOpenFile(p & Format(Now, "yyyymmdd") & ext)
+  If Not FileNameAbsolut(we.DocFile) Then we.DocFile = p & we.DocFile
+  fnsplit we.DocFile, "", n, e
+  If e = "" Then we.DocFile = we.DocFile & ext   'ggf. ergänzen
+  If n = "" Then
+    DoCmd Hourglass False
+    MsgBox "Ungültiger Dateiname der Dokumentvorlage '" & we.DocFile & "'."
+    Exit Sub
+  End If
+  itxtWordDDEExport we, Register, Rec
+  DoCmd Hourglass False
+  
+Exit_txtPrepareAndOpen:
+  On Error Resume Next
+  If UnValidDoc Then Kill we.NewDocName
+  Exit Sub
+
+ERR_txtPrepareAndOpen:
+  MsgError "", "txtPrepareAndOpen"
+  DoCmd Hourglass False
+  Resume Exit_txtPrepareAndOpen
+End Sub
+
+Function YesNo% (Meldung$, Titel$, Critical%, JaDefault%)
+YesNo = MsgBox(Meldung, 276 + IIf(Critical, 0, 16) + JaDefault * 256, Titel) = 6
+End Function
+
