@@ -53,14 +53,14 @@ Type MipStr
 End Type
 
 Function BeimÄndern (SperrFeld$)
-Dim x%, L As Control
+Dim x%, l As Control
 If SperrFeld > "" Then
   On Error Resume Next'falls kein Steuerelement aktiv ist
   x = Screen.ActiveControl.Left = 0
   On Error GoTo 0
-  Set L = Screen.ActiveForm(SperrFeld)
-  If L > 1 Or (L And x) Then
-    MsgStop "Dieser Datensatz hat den Status '" & Sperre(Val(L)) & "', weil er für bestimmte Funktionalitäten zwingend benötigt wird. Er kann deshalb nicht gelöscht und " & IIf(L = 1, "in Spalte 1 ", "") & "nicht geändert werden."
+  Set l = Screen.ActiveForm(SperrFeld)
+  If l > 1 Or (l And x) Then
+    MsgStop "Dieser Datensatz hat den Status '" & Sperre(Val(l)) & "', weil er für bestimmte Funktionalitäten zwingend benötigt wird. Er kann deshalb nicht gelöscht und " & IIf(l = 1, "in Spalte 1 ", "") & "nicht geändert werden."
     BeimÄndern = True
     Exit Function
   End If
@@ -128,6 +128,25 @@ BerichtA:
   
 End Sub
 
+Sub Bericht_Jahresscheiben (d As Database, ByVal wS$, e$)
+Dim g$, i%, n$, SQL$, r As Recordset
+Const p = "J_"
+Const f = "Gruppe,Einheit,Sortierung,Position"
+g = "Min(G)as Gruppe,Einheit,Min(S&Position)as Sortierung,Position FROM " & et & " WHERE" & e & "Einheit,Position PIVOT'" & p & "'&Jahr"
+If CreateTable(d, wS & "L", f, "Min(MengeList)", g) Then Exit Sub
+If CreateTable(d, wS & "S", f, "Sum(Menge)", SubstituteAll(g, "'" & p & "'&", " ")) Then Exit Sub
+Set r = d.OpenRecordset(wS & "S")
+SQL = ""
+For i = 0 To r.Fields.Count - 1
+  n = r(i).Name
+  If n Like "####" Then SQL = SQL & "," & p & n
+Next
+r.Close
+DoCmd Close A_REPORT, wS
+If CreateTable(d, wS, f, "", "S.*" & SQL & " FROM[" & wS & "L]L INNER JOIN [" & wS & "S]S ON L.Einheit=S.Einheit AND L.Position=S.Position") Then Exit Sub
+Bericht d, wS, "2+5", p
+End Sub
+
 Private Sub BerichtsGruppierung (rs As Recordset, Spaltenbreiten$, Seitenbreite%, Breiten&, Höhe%, r As Report, Gruppierung%, Prefix$)
 Dim c As Control, i%, Zwischenraum%
 
@@ -176,9 +195,9 @@ End Sub
 Private Sub BerichtsSpalten (rs As Recordset, ByVal Spaltenbreiten$, BreitenFaktor#, Höhe%, Zwischenraum%, r As Report, Gruppierung%, Prefix$, Kopf%)
 Dim Breite#, Links#, i%, p%, c As Control, f$, g$, Fmt$, FeldDopplung%
 
-FeldDopplung = Abs(rs(rs.Fields.count - 1).Type > 9)'Dopplung aller Zahlenfelder durch Textfelder (mit Präfix 'Prefix$')
+FeldDopplung = Abs(rs(rs.Fields.Count - 1).Type > 9)'Dopplung aller Zahlenfelder durch Textfelder (mit Präfix 'Prefix$')
 
-For i = 2 To rs.Fields.count / (FeldDopplung + 1) + IIf(FeldDopplung, 1, -1)
+For i = 2 To rs.Fields.Count / (FeldDopplung + 1) + IIf(FeldDopplung, 1, -1)
   f = rs(i).Name
   If f <> "Sortierung" Then
     Links = Links + Breite
@@ -186,7 +205,7 @@ For i = 2 To rs.Fields.count / (FeldDopplung + 1) + IIf(FeldDopplung, 1, -1)
       Breite = Val(DevideString(Spaltenbreiten))
       
       'provisorische Lösung "+1" -> freie Spalte für manuellen Eintrag des akt.Jahres
-      If Spaltenbreiten = "" Then Breite = Breite / (rs.Fields.count / (FeldDopplung + 1) + 3 - i)'wenn weniger Breiten angegeben, teilen sich alle restlichen Spalten den Breiten-Rest
+      If Spaltenbreiten = "" Then Breite = Breite / (rs.Fields.Count / (FeldDopplung + 1) + 3 - i)'wenn weniger Breiten angegeben, teilen sich alle restlichen Spalten den Breiten-Rest
   
     End If
     If Gruppierung = 0 Or (rs(i).Type < 10 And (Gruppierung < 2 Or Not Kopf)) Then
@@ -255,7 +274,8 @@ End Sub
 Sub EventProcedure (Eigenschaft$, c As Control, f As Form, t$)
 On Error GoTo EventProcedureA
 
-Dim p As Property, e$, g$
+Dim p As Property, e$, g$, l%
+Const lmax = 26
 g = c.Name
 Select Case Eigenschaft
  Case "BeforeDelConfirm"
@@ -269,12 +289,16 @@ Select Case Eigenschaft
   Set p = c.Properties("On" & Eigenschaft)
   If Eigenschaft = "NotInList" Then e = "(NewData$,Response%)"
 End Select
-p = "[Ereignisprozedur]"
-
-If Len(g) > 26 Then
-  MsgStop "Bitte den Spaltennamen '" & g & "' auf maximal 26 Zeichen verkürzen!"
- Else
-  f.Module.InsertText "Sub " & g & "_" & Eigenschaft & e & CR() & t & CR() & "End Sub"
+If IsNumeric(Left(g, 1)) Then 'bei Spalten mit numerisch/en/beginnenden Namen kommt zum Glück bisher nur...
+  p = "=BeimÄndern("""")"     '"BeforeUpdate" vor,...
+ Else                         'sonst müsste eine andere Lösung her,...
+  p = "[Ereignisprozedur]"    'weil die Namen von (Ereignis)Prozeduren nicht mit Ziffern beginnen dürfen.
+  l = Len(g)
+  If l > lmax Then
+    MsgStop "Bitte den Spaltennamen '" & g & "' verkürzen von " & l & " auf maximal " & lmax & " Zeichen!"
+   Else
+    f.Module.InsertText "Sub " & g & "_" & Eigenschaft & e & CR() & t & CR() & "End Sub"
+  End If
 End If
 
 Exit Sub
@@ -343,11 +367,11 @@ If IsNull(NewData) Or NewData = "" Then
   MsgBox "Am Anfang und Ende des eingegebenen Textes dürfen sich keine Leerzeichen befinden", 16, "Unzulässiger Wert"
   Response = DATA_ERRCONTINUE
  Else
-  For j = 0 To db.Relations.count - 1
+  For j = 0 To db.Relations.Count - 1
     Set Re = db.Relations(j)
     If Re.ForeignTable = Tabelle And Re.Fields(0).ForeignName = t(i).Name Then Exit For
   Next
-  If Re.Fields.count = 1 Then 'Nur für 1-spaltige Fremdschlüssel
+  If Re.Fields.Count = 1 Then 'Nur für 1-spaltige Fremdschlüssel
     If YesNo(Tabelle & " '" & RTrim(NewData) & "' neu aufnehmen?", "Neuer Wert", 0, 0) Then
       NichtInListeTabelle t, CStr(t(i).Name), RTrim(NewData)
       Response = DATA_ERRADDED
@@ -374,7 +398,7 @@ On Error GoTo NichtInListeTabelleA
 
 Dim db As Database, t As Recordset, j%, Re As Relation
 Set db = DBEngine(0)(0)
-For j = 0 To db.Relations.count - 1
+For j = 0 To db.Relations.Count - 1
   Set Re = db.Relations(j)
   If Re.ForeignTable = r.Name And Re.Fields(0).ForeignName = Feld Then
     If Not (Re.Attributes And DB_RELATIONDONTENFORCE) Then
@@ -420,7 +444,7 @@ On Error GoTo SteuerelementhöheÄndernA
 
 Dim i%, c As Control
 If Not zurück Then Application.Echo False
-For i = 0 To Formular.count - 1
+For i = 0 To Formular.Count - 1
   If Formular(i).Section = 0 Then
     Set c = Formular(i)
     c.BorderStyle = IIf(zurück, 1, 0)
@@ -498,9 +522,7 @@ Exit Function
 TabelleBearbeitenA:
   Select Case Err
    Case 2467'falls Formular geschlossen wurde
-   Case 3049'Fehler "Datenbank beschädigt" tritt in "BookMark="-Zeile auf, wenn "Requery" noch nicht abgeschlossen
-    DoEvents
-   Case 3201'Kein "Requery" möglich, da ref. Integrität nicht erfüllt
+   Case 3049, 3159, 3201
     Resume Next
    Case Else
     MsgError "", "TabelleBearbeiten"
@@ -515,7 +537,7 @@ On Error GoTo TabelleBearbeitenAA
 Dim d As Database, GerätModus As DeviceMode, r As Recordset, idx As Index, qd As QueryDef, t As TableDef, fd As Field, fn$, Tabl%, Spalten%(), Breite&(), schmal%, ty%, f As Form, c As Control, e$, p$, Tabelle$, Feld$, isRl%, Rl As Relation, Re As Relation, ri As MarginInfo, dm As DevModeStr, mip As MipStr, i%, j&, k%, x&, dx%, dy%, HeightAndFontFactor!, ScreenSize%(), ScaleFactor#()
 ReDim ScreenSize(1), ScaleFactor(1), Spalten(2), Breite(2)
 Const q = """"
-Const L = "Datensatzsperre"
+Const l = "Datensatzsperre"
     
 Set d = DBEngine(0)(0)
 
@@ -559,8 +581,8 @@ If Tabelle = "Datenmodell" Then
       Set qd = d.QueryDefs(Tabelle)
       Feld = qd.Fields(Spalte - 1).Name
       Spalte = qd.Fields(Spalte - 1).Type = DB_TEXT
-      Spalten(0) = qd.Fields.count
-      For i = 0 To qd.Fields.count - 1
+      Spalten(0) = qd.Fields.Count
+      For i = 0 To qd.Fields.Count - 1
 	TabelleBearbeitenASpalten qd.Fields(i).Type, Spalten()
       Next
      Else
@@ -568,8 +590,8 @@ If Tabelle = "Datenmodell" Then
       Tabl = True
       Feld = t(Spalte - 1).Name
       Spalte = t(Spalte - 1).Type = DB_TEXT
-      Spalten(0) = t.Fields.count
-      For i = 0 To t.Fields.count - 1
+      Spalten(0) = t.Fields.Count
+      For i = 0 To t.Fields.Count - 1
 	TabelleBearbeitenASpalten t(i).Type, Spalten()
       Next
     End If
@@ -578,11 +600,11 @@ If Tabelle = "Datenmodell" Then
     e = ""
     For i = 0 To Spalten(0) - 1 '...zu priorisierende Spalten
       x = t(i).Required
-      For k = 0 To t.Indexes.count - 1
+      For k = 0 To t.Indexes.Count - 1
 	If x Then Exit For
 	Set idx = t.Indexes(k)
 	  If idx.Primary Then
-	    For j = 0 To idx.Fields.count - 1
+	    For j = 0 To idx.Fields.Count - 1
 	      If idx.Fields(j).Name = t(i).Name Then x = True: Exit For
 	    Next
 	  End If
@@ -594,10 +616,10 @@ If Tabelle = "Datenmodell" Then
     Next
     
     SQLStr = InsString("SELECT * FROM[" & Tabelle & "]IN'" & d.Name & "'" & IIf(Spalte, "WHERE[" & Feld & "]>' '", ""), e, " ORDER BY") & ";"
-    For i = 0 To Forms.count - 1
+    For i = 0 To Forms.Count - 1
       If Forms(i).RecordSource = SQLStr Then Exit For
     Next
-    If i < Forms.count Then
+    If i < Forms.Count Then
       Forms(i).SetFocus
 
      Else
@@ -640,9 +662,8 @@ If Tabelle = "Datenmodell" Then
       Breite(0) = ScaleFactor(1) * 11432 / Spalten(0)
       Breite(1) = Breite(0) * .8
       Breite(2) = Breite(1) * 1.1
-      x = IIf(Spalten(0) = Spalten(i), 1, 0)'da sonst "Division durch 0" bei Tabellen, die nur numerische Spalte(n) enthalten
       For i = 1 To 2
-	Breite(0) = Breite(0) + Spalten(i) * (Breite(0) - Breite(i)) / (Spalten(0) - Spalten(i) + x)
+	Breite(0) = Breite(0) + Spalten(i) * (Breite(0) - Breite(i)) / (Spalten(0) - Spalten(i) + IIf(Spalten(i) = Spalten(0), 1, 0))
       Next
       x = 0
       For i = 0 To Spalten(0) - 1
@@ -653,10 +674,10 @@ If Tabelle = "Datenmodell" Then
 	  Set fd = t(i)
 	  fn = fd.Name
 	  isRl = True
-	  For j = 0 To d.Relations.count - 1
+	  For j = 0 To d.Relations.Count - 1
 	    Set Rl = d.Relations(j)
 	    If Rl.ForeignTable = Tabelle Then
-	      For k = 0 To Rl.Fields.count - 1
+	      For k = 0 To Rl.Fields.Count - 1
 		If Rl.Fields(k).ForeignName = fn Then
 		  isRl = k
 		  If Not (Rl.Attributes And DB_RELATIONDONTENFORCE) Then Exit For
@@ -668,7 +689,7 @@ If Tabelle = "Datenmodell" Then
 	End If
 	ty = fd.Type
 	j = Breite(IIf(ty = DB_DATE, 2, Abs(ty < DB_TEXT)))
-	k = fn = L
+	k = fn = l
 	Set c = CreateControl(e, 100, 1, "", "", x, Int(ScaleFactor(1) * 360 / HeightAndFontFactor), j, Int(ScaleFactor(1) * 284 / HeightAndFontFactor))
 	c.Caption = IIf(k, "Status", fn)
 	c.BackStyle = 0
@@ -679,7 +700,7 @@ If Tabelle = "Datenmodell" Then
 	c.Name = fn
 	c.FontSize = 8 * HeightAndFontFactor
 	If IsNumeric(fn) Then c.Format = "#.#0"
-	p = "If BeimÄndern(""" & IIf(accExistField(Tabelle, L), L, "") & """) Then Cancel = True"'da p (s.u.) auch für Ereignisprozeduren ANDERER Felder benötigt
+	p = "If BeimÄndern(""" & IIf(accExistField(Tabelle, l), l, "") & """) Then Cancel = True"'da p (s.u.) auch für Ereignisprozeduren ANDERER Felder benötigt
 	If k Then
 	  c.Visible = False
 	  c.Enabled = False
@@ -687,12 +708,12 @@ If Tabelle = "Datenmodell" Then
 	  c.Name = fn & et
 	  c.Enabled = False
 	  c.FontSize = 8 * HeightAndFontFactor
-	  c.ControlSource = "=Sperre(" & L & ")"
+	  c.ControlSource = "=Sperre(" & l & ")"
 	  EventProcedure "BeforeDelConfirm", c, f, p
 	End If
 	x = x + j
 	k = 0
-	For j = 0 To d.Relations.count - 1
+	For j = 0 To d.Relations.Count - 1
 	  Set Re = d.Relations(j)
 	  If Re.Table = Tabelle And Re.Fields(0).Name = c.Name And Not (Re.Attributes And DB_RELATIONDONTENFORCE) Then
 	    k = k + 1
@@ -712,9 +733,9 @@ If Tabelle = "Datenmodell" Then
 	      c.ColumnWidths = "0;" & c.Width / cm & "cm"
 	     Else
 	      fn = Rl.Fields(isRl).Name
-	      c.RowSource = "SELECT " & IIf(fd.AllowZeroLength Or fd.Required = False, IIf(fd.AllowZeroLength, "''", "null") & " FROM[@Main]" & UNION, "") & "DISTINCT " & fn & " FROM[" & Rl.Table & "]ORDER BY 1" & IIf(ty = DB_DATE, " DESC", "")
+	      c.RowSource = "SELECT " & IIf(fd.AllowZeroLength Or fd.Required = False, IIf(fd.AllowZeroLength, "''", "null") & " FROM[" & Rl.Table & "]" & UNION, "") & "DISTINCT " & fn & " FROM[" & Rl.Table & "]ORDER BY 1" & IIf(ty = DB_DATE, " DESC", "")
 	      c.OnDblClick = "=TabelleBearbeiten()"
-	      For j = 0 To d.Relations.count - 1
+	      For j = 0 To d.Relations.Count - 1
 		Set Re = d.Relations(j)
 		If Re.ForeignTable = Rl.Table And Re.Fields(0).ForeignName = fn Then If Not (Re.Attributes And DB_RELATIONDONTENFORCE) Then Exit For
 	      Next
@@ -794,16 +815,16 @@ If b = "" Then Exit Function
 
 Dim d As Database, i%, k%
 Set d = DBEngine(0)(0)
-For i = 0 To d.TableDefs.count - 1
+For i = 0 To d.TableDefs.Count - 1
   If d(i).Name = b Then Exit For
 Next
-If i < d.TableDefs.count Then
+If i < d.TableDefs.Count Then
   TabelleErmitteln = b
  Else
-  For i = 0 To d.QueryDefs.count - 1
+  For i = 0 To d.QueryDefs.Count - 1
     If d.QueryDefs(i).Name = b Then Exit For
   Next
-  If i < d.QueryDefs.count Then b = d.QueryDefs(i).SQL
+  If i < d.QueryDefs.Count Then b = d.QueryDefs(i).SQL
   Do Until InStr(b, Chr(10)) = 0
     i = InStr(b, Chr(10))
     Mid(b, i, 2) = " "
@@ -829,4 +850,3 @@ Sub TabelleWählen (Filter$, Negotiation%, Caption$)
 clean
 TabelleBearbeitenA SelectItemPre("Name", "Name", "MSysObjects", "Type=1 and Val(VToS(Flags))=0 and not Name like'@*'and " & IIf(Negotiation, "not ", "") & "Name " & IIf(Right(Filter, 1) = "*", "like'" & Filter & "'", "in('" & SubstituteAll(Filter, "+", "','") & "')"), "Name", SubstituteAll(SubstituteAll(SubstituteAll(Caption, "(", "~"), "~", " ("), "  ", " "), 0), 1, ""
 End Sub
-
