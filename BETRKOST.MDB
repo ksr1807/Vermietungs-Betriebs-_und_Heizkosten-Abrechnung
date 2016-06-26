@@ -38,7 +38,7 @@ If r = "" Then Exit Sub
 wT = "[" & wS & "]"
 
 'Initialisierung der Fortschrittsanzeige
-i = sbaStep()
+e(0) = Str(sbaStep())
 Set rs = d(0).OpenRecordset("SELECT * FROM " & tJ & IIf(wS = "Abrechnung", " WHERE Jahr=" & r, " ORDER BY Jahr"))
 rs.MoveLast
 i = sbaInit(wS, IIf(i, 11 + 8 * rs.RecordCount, 14 + 3 * rs.RecordCount)) 'gemäß Anzahl der Aufrufe von CreateTbl+CreateTable+insertToGenDupl
@@ -79,7 +79,7 @@ While Not rs.eof
     insertToFromTmp d(1), B & et
     insertToAll d(1), a & et, B & et
   End If
-  SQL = Key & " AS" & wT & ",Date()AS Datum,'01.01." & rs.Jahr & "'AS AbrechVon,'31.12." & rs.Jahr & "'AS AbrechBis" & e(2) & "AS bis,DateDiff('d',AbrechVon,AbrechBis)+1 AS AbrechTage,DSum('Anteil','Gradtage','MonatNr between '&Month(von)&' and '&Month(bis))as GradtagFaktor,iif(Month(von)<>1 or Month(bis)<>12,BinaryToList(FVDLookupSort('Format(CVDate(""1.""&MonatNr),""mmmm:"")&Format(Round_WithPos_FxLen(100*Anteil,2),"""")&""%""','Gradtage','MonatNr between '&Month(von)&' and '&Month(bis),'MonatNr'),' + '),'')as GradtagFooter,DateDiff('d',von,bis)+1 AS Tage,w.Objekt,w.Wohnung AS " & k & ",InsString(VToS(Titel),a.Name,' ')AS Mieter,Anrede,iif(Titel like'*partner'OR Titel like'*paar'OR Titel='Familie',1,0)AS Fam,perDu,GetValueOrDefault(VToS(StraßeNr),VToS(NDLookup1('StraßeNr','Adressen','Name',Objekt)))AS Straße,GetValueOrDefault(VToS(Plz+' '&Ort),VToS(NDLookup1('Plz+Space(1)&Ort','Adressen','Name',Objekt)))AS Stadt," & e(1) & "0)AS VorauszahlungsListe,"
+  SQL = Key & " AS" & wT & ",Date()AS Datum,'01.01." & rs.Jahr & "'AS AbrechVon,'31.12." & rs.Jahr & "'AS AbrechBis" & e(2) & "AS bis,DateDiff('d',AbrechVon,AbrechBis)+1 AS AbrechTage,DSum('Anteil','Gradtage','MonatNr between '&Month(von)&' and '&Month(bis))as GradtagFaktor,iif(Month(von)<>1 or Month(bis)<>12,BinaryToList(FVDLookupSort('Format(CVDate(""1.""&MonatNr),""mmmm:"")&Format(Round_WithPos_FxLen(100*Anteil,2),"""")&""%""','Gradtage','MonatNr between '&Month(von)&' and '&Month(bis),'MonatNr'),' + '),'')as GradtagFooter,DateDiff('d',von,bis)+1 AS Tage,w.Objekt,w.Wohnung AS " & k & ",InsString(VToS(Titel),a.Name,' ')AS Mieter,Anrede,iif(Titel like'*partner'OR Titel like'*paar'OR Titel='Familie',1,0)AS Fam,perDu,GetValueOrDefault(VToS(StraßeNr),VToS(NDLookup1('StraßeNr','Adressen','Name',Objekt)))AS Straße,GetValueOrDefault(VToS(Plz+' '&Ort),VToS(NDLookup1('Plz+Space(1)&Ort','Adressen','Name',Objekt)))AS Stadt,SubstituteAll('('&" & e(1) & "4)&')','()','')AS VorauszahlungsListe,"
   If CreateTable(d(1), wS, k, "", SQL & "VToD(" & e(1) & "2))AS VZSum,EUR(VZSum)AS VorauszahlungsSumme" & vB & "Antenne'," & k & ",von,bis,2))AS Antenne" & vB & "Internet'," & k & ",von,bis,2))AS Internet,VToD(FDLookupSort('Kaltmiete','" & B & "','Wohnung=""'&Wohnung&'""AND ab='&sqlDate(ab),'ab DESC')+Garage)AS Miete,FDLookupSort('iif(GarageSeparat,0,Garage)','" & B & "','Wohnung=""'&Wohnung&'""AND ab='&sqlDate(ab),'ab DESC')AS Garage,iif(Garage>0,'(davon '&EUR(Garage)&' für Garage)','')AS davonGarage,VToD(FDLookupSort('Zahlung-iif(GarageSeparat,Garage,0)','" & B & "','Wohnung=""'&Wohnung&'""AND ab='&sqlDate(ab),'ab DESC'))-Miete AS VorauszahlungAlt FROM Adressen a INNER JOIN(Wohnungen w INNER JOIN Mieter m ON w.Wohnung=m.Wohnung)ON a.Name=m.Name WHERE Year(ab)=" & rs.Jahr & " OR ab=DMax(" & e(0) & "')OR Year(FDLookupSort(" & GetValFromBinary(ListToBinary(e(0), " "), 1) & " Name<>""'&m.Name&'""','ab'))=" & rs.Jahr) Then Exit Sub
   
   'Sonderfaktor(en), z.B. wegen Umstellung der Abrechnungsperioden-Stichtage
@@ -90,7 +90,7 @@ While Not rs.eof
   e(1) = "r." & SubstituteAll(SubstituteAll(Fld, "&", "+"), "+", ",r.") & "," & u & ",AbrechTage,Tage,r.Objekt"
   e(2) = " FROM " & a & et & " a INNER JOIN" & wT & "r on a.Wohnung=r.Wohnung and a.ab=r.ab "
   If CreateTbl(d(1), "S", "Min(a.Objekt)AS o," & u & " as u,Min(Wert*Tage/AbrechTage)AS v" & e(2) & "GROUP BY a.Wohnung,a.ab," & u) Then Exit Sub
-  If CreateTable(d(1), p, k, "", e(1) & ",Wert as Eigen,0 as Gesamt,.0 AS Faktor" & e(2) & UNION & SubstituteAll(e(1), "l,A", "l&iif(" & u & " LIKE'" & H2O & "'or " & u & "='" & h & "','',ObjektTeil(NDLookup1('ObjektTeil','Wohnungen','Wohnung',Wohnung))),A") & ",VToD(DSum('Stand','" & z & et & "','Art=""'&" & u & "&'""" & e(7) & " and Wohnung=""'&Wohnung&'""and ab='&sqlDate(ab))),0,0 FROM" & wT & "r," & u) Then Exit Sub
+  If CreateTable(d(1), p, k, "", e(1) & ",Wert as Eigen,.0 as Gesamt,.0 AS Faktor" & e(2) & UNION & SubstituteAll(e(1), "l,A", "l&iif(" & u & " LIKE'" & H2O & "'or " & u & "='" & h & "','',ObjektTeil(NDLookup1('ObjektTeil','Wohnungen','Wohnung',Wohnung))),A") & ",VToD(DSum('Stand','" & z & et & "','Art=""'&" & u & "&'""" & e(7) & " and Wohnung=""'&Wohnung&'""and ab='&sqlDate(ab))),0,0 FROM" & wT & "r," & u) Then Exit Sub
   d(1).Execute "DELETE FROM " & p & " WHERE Eigen=0"
 
   e(4) = " where Konto like'Wasser:  " & H2Olike & "wasser'" 'Leerzeichenanzahl GENAU SO wegen Sortierung
@@ -185,7 +185,7 @@ If wS = "Abrechnung" Then
   p = "Faktor>-1 and "
   e(0) = SubstituteAll(w, "w.", "")
   e(1) = e(0) & p
-  SQL = "*,DSum('K','" & et & "','" & wT & "=""'&" & wS & "&'""')AS Kost,EUR(DSum('K','" & et & "','" & wT & "=""'&" & wS & "&'""and anteilig LIKE""*H""'))AS KostHnD,EUR(Kost)AS Kosten,VZSum-Kost AS Diff,EUR(Abs(Diff))AS Differenz,iif(Diff<0,'eine Nachzahlung','ein Guthaben')AS DifferenzArt,iif(VZSum-Kost<DLookup('VorauszahlungsErhöhung_ab_Differenz','Wohnungen','Wohnung=""'&Wohnung&'""')OR VZSum-Kost>DLookup('VorauszahlungsSenkung_ab_Differenz','Wohnungen','Wohnung=""&Wohnung&""'),RoundTo(VToD(VorauszahlungAlt)-Diff/12,DLookup('VorauszahlungsRundung_auf','Wohnungen','Wohnung=""'&Wohnung&'""')),VorauszahlungAlt)AS VorauszahlungNeu,EUR(Miete)AS KaltMiete,EUR(Miete+VorauszahlungNeu)AS GesamtMiete,Mid(InsString('.',BinaryToList(VToS(FVDLookupSort('Begründung','Sonderfaktoren','" & e(1) & "Jahr=" & r & "','" & u & "')),', '),'" & Trim(s) & " = '),2)AS Sonder,"
+  SQL = "*,DSum('K','" & et & "','" & wT & "=""'&" & wS & "&'""')AS Kost,EUR(DSum('K','" & et & "','" & wT & "=""'&" & wS & "&'""and anteilig LIKE""*H""'))AS KostHnD,EUR(Kost)AS Kosten,VZSum-Kost AS Diff,EUR(Abs(Diff))AS Differenz,iif(Diff<0,'eine Nachzahlung','ein Guthaben')AS DifferenzArt,iif(VZSum-Kost<DLookup('VorauszahlgsErhöhg_ab_Diff','Wohnungen','Wohnung=""'&Wohnung&'""')OR VZSum-Kost>DLookup('VorauszahlgsSenkg_ab_Diff','Wohnungen','Wohnung=""&Wohnung&""'),RoundTo(VToD(VorauszahlungAlt)-Diff/12,DLookup('VorauszahlgsRundg_auf','Wohnungen','Wohnung=""'&Wohnung&'""')),VorauszahlungAlt)AS VorauszahlungNeu,EUR(Miete)AS KaltMiete,EUR(Miete+VorauszahlungNeu)AS GesamtMiete,Mid(InsString('.',BinaryToList(VToS(FVDLookupSort('Begründung','Sonderfaktoren','" & e(1) & "Jahr=" & r & "','" & u & "')),', '),'" & Trim(s) & " = '),2)AS Sonder,"
   SQL = SQL & "iif(perDu,iif(Fam,'Euer','Dein'),'Ihr')AS Possesiv,iif(Diff<0,'Bitte überweis'&iif(perDu,iif(Fam,'t','e'),'en Sie')&' diesen Betrag auf unser '&iif(perDu,iif(Fam,'Euch','Dir'),'Ihnen')&' bekanntes Konto'&Cr()&'(IBAN: '&DLookup('IBAN&"", BIC:""&BIC','Adressen','Name=""'&Objekt&'""')&').',iif(Diff>0,'Diesen Betrag erh'&iif(perDu,iif(Fam,'altet Ihr','ältst Du'),'alten Sie')&' in wenigen Tagen per Überweisung auf '&Possesiv&' Konto '&DLookup('IBAN&"" BIC:""&BIC','Adressen','Titel&"" ""&Name=""'&Mieter&'""')&' zurückerstattet.',''))AS DifferenzAusgleich,EUR(VorauszahlungNeu)AS VorauszahlungNeuFormatiert,"
   If CreateTable(d(1), wS & et, wS, "", SQL & "InsString(VToS(DLookup('Bemerkung','BemerkungenMieterJahr','" & e(0) & "true')),VToS(iif(VorauszahlungNeu>VorauszahlungAlt,DLookup('Erhöhung_Bemerkung','Wohnungen','Wohnung=""'&Wohnung&'""'),iif(VorauszahlungNeu<VorauszahlungAlt,DLookup('Senkung_Bemerkung','Wohnungen','Wohnung=""'&Wohnung&'""'),''))),Cr())AS Bemerkung,iif(VorauszahlungNeu=VorauszahlungAlt,'bleibt unverändert',iif(VorauszahlungNeu>VorauszahlungAlt,'erhöht','verringert')&' sich ab '&Format(DateAdd('m',2,Now),'mmmm yyyy')&' um '&EUR(Abs(VorauszahlungNeu-VorauszahlungAlt))&' auf '&VorauszahlungNeuFormatiert)&'. Die '&iif(VorauszahlungNeu<>VorauszahlungAlt,'neue','unveränderte')&' Gesamtmiete beträgt '&Gesamtmiete AS Änderung,iif(perDu,'Viele Grüße','Mit freundlichen Grüßen')AS Gruß FROM" & wT) Then Exit Sub
   d(1).Execute "DELETE from[" & wS & et & "]WHERE Kost IS NULL"
@@ -197,10 +197,9 @@ If wS = "Abrechnung" Then
   txtPrepareAndOpenSpecial wS, "SELECT *," & u & "&iif(DLookup('Begründung','Sonderfaktoren','" & e(1) & """'&" & u & "&'""like""*""&" & u & " and Jahr=" & r & "')>'','" & s & "')AS USchlü,DLookup('Anrede&"", ""&StraßeNr&"", ""&PLZ&"" ""&Ort','Adressen','Name=""'&Objekt&'""')AS VAdr,DLookup('Ort','Adressen','Name=""'&Objekt&'""')AS VOrt FROM[" & wS & et & "]t LEFT JOIN " & et & " s ON t." & wT & "=s." & wT & "ORDER BY t." & wT & "," & e(2), DT_Word97, Entwurf
  
  Else
-  wS = wS & "  -  " & r
-  DoCmd Close A_REPORT, wS
-  r = " WHERE Objekt='" & r & "'"
+  p = " WHERE Objekt='" & r & "'"
   
+  d(1).Execute "UPDATE " & e(3) & " SET Konto=Konto&ObjektTeil(ObjektTeil)"
   e(0) = ""
   For i = 1 To 13
     e(0) = InsString(e(0), "Objekt,Konto," & i & " as i," & IIf(i < 13, Format(i, "'00'"), "'Jahresrechnung'") & "as P,Jahr,[" & IIf(i < 13, i, 0) & "]as Menge FROM " & e(3), UNION)
@@ -208,28 +207,14 @@ If wS = "Abrechnung" Then
   If CreateTbl(d(1), et, e(0)) Then Exit Sub
   
   e(0) = " Jahr>Year(Now())-12 GROUP BY "
-  If CreateTbl(d(1), "Kosten", "iif(Konto like'Heizung*','Heiz','Betriebs')&'kosten'as G,iif(DomCount('SELECT Konto FROM " & et & et & " WHERE Menge AND Konto=" & Chr(34) & "'&Konto&'" & Chr(34) & "AND" & e(0) & "Konto,Jahr HAVING Count(*)>1'),Konto,' ')as Einheit,Format(i,'00')as S,iif(Einheit=' ',Trim(SubstituteAll(Konto,'Heizung:','')),P)as Position,Jahr,Round_WithPos_FxLen(Menge,2)as MengeList,Menge FROM " & et & et & r & "AND Menge") Then Exit Sub
+  If CreateTbl(d(1), "Kosten", "iif(Konto like'Heizung*','Heiz','Betriebs')&'kosten'as G,iif(DomCount('SELECT Konto FROM " & et & et & " WHERE Menge AND Konto=" & Chr(34) & "'&Konto&'" & Chr(34) & "AND" & e(0) & "Konto,Jahr HAVING Count(*)>1'),Konto,' ')as Einheit,Format(i,'00')as S,iif(Einheit=' ',Trim(SubstituteAll(Konto,'Heizung:','')),P)as Position,Jahr,Round_WithPos_FxLen(Menge,2)as MengeList,Menge FROM " & et & et & p & "AND Menge") Then Exit Sub
   
   Betriebskosten "Jahr", "Objekt", ",Wohnungen w", " AND z.Wohnung=w.Wohnung"
   Betriebskosten "Mieter", "z." & k, "", ""
-  If CreateTbl(d(1), "Stand", "Min(UmlageS)as G,Min(z.Wohnung&'  ('&Trim(FDLookupSort('Name','Mieter','Wohnung=" & Chr(34) & "'&z.Wohnung&'" & Chr(34) & "','ab DESC'))&')')as Einheit,Position as S,Min(IfNoH(z.Art,DoubleChar(Right(Space(3)&z.Nummer,4),' '))&iif(Standort='.','',IfNoH(z.Art,'  (')&Standort&IfNoH(z.Art,')')))as Position,Jahr,BinaryToList(VToS(FVDLookupSort('Stand','" & z & "'&iif(z.Art" & inkrementell & ",'','" & et & "'),'Art=""'&z.Art&'""and Nummer='&z.Nummer&' and Jahr='&Jahr,'ab')),'+')as MengeList,Val(Eval(MengeList))as Menge FROM Zähler z INNER JOIN " & z & et & " s ON z.Nummer=s.Nummer AND z.Art=s.Art WHERE z.Wohnung IN(SELECT Wohnung FROM Wohnungen" & r & ")AND" & e(0) & "z.Art,z.Nummer,Jahr") Then Exit Sub
+  If CreateTbl(d(1), "Stand", "Min(UmlageS)as G,Min(z.Wohnung&'  ('&Trim(FDLookupSort('Name','Mieter','Wohnung=" & Chr(34) & "'&z.Wohnung&'" & Chr(34) & "','ab DESC'))&')')as Einheit,Position as S,Min(IfNoH(z.Art,DoubleChar(Right(Space(3)&z.Nummer,4),' '))&iif(Standort='.','',IfNoH(z.Art,'  (')&Standort&IfNoH(z.Art,')')))as Position,Jahr,BinaryToList(VToS(FVDLookupSort('Stand','" & z & "'&iif(z.Art" & inkrementell & ",'','" & et & "'),'Art=""'&z.Art&'""and Nummer='&z.Nummer&' and Jahr='&Jahr,'ab')),'+')as MengeList,Val(Eval(MengeList))as Menge FROM Zähler z INNER JOIN " & z & et & " s ON z.Nummer=s.Nummer AND z.Art=s.Art WHERE z.Wohnung IN(SELECT Wohnung FROM Wohnungen" & p & ")AND" & e(0) & "z.Art,z.Nummer,Jahr") Then Exit Sub
   If CreateTable(d(1), et, "Einheit,Position,Jahr", "", "* FROM Kosten" & et & UNION & "* FROM Stand" & et) Then Exit Sub
   
-  p = "J_"
-  e(1) = "Gruppe,Einheit,Sortierung,Position"
-  e(2) = "Min(G)as Gruppe,Einheit,Min(S&Position)as Sortierung,Position FROM " & et & " WHERE" & e(0) & "Einheit,Position PIVOT'" & p & "'&Jahr"
-  If CreateTable(d(1), wS & "L", e(1), "Min(MengeList)", e(2)) Then Exit Sub
-  If CreateTable(d(1), wS & "S", e(1), "Sum(Menge)", SubstituteAll(e(2), "'" & p & "'&", " ")) Then Exit Sub
-  Set rs = d(1).OpenRecordset(wS & "S")
-  SQL = ""
-  For i = 0 To rs.Fields.Count - 1
-    r = rs(i).Name
-    If r Like "####" Then SQL = SQL & "," & p & r
-  Next
-  rs.Close
-  If CreateTable(d(1), wS, e(1), "", "S.*" & SQL & " FROM[" & wS & "L]L INNER JOIN [" & wS & "S]S ON L.Einheit=S.Einheit AND L.Position=S.Position") Then Exit Sub
-  
-  Bericht d(1), wS, "2+5", p
+  Bericht_Jahresscheiben d(1), wS & "  -  " & r, e(0)
 End If
 sbaDone
 End Sub
@@ -250,9 +235,10 @@ While v <= Val(Format(CVDate(bis), "yyyymm"))
    Case 2, 3 'Summe oder Durchschnitt(arithm.Mittel)
     rw = VToD(rw) + tmp
     c = c + 1
-   Case Else 'Liste
+   Case 4    'Liste
     If tmp <> g Then
       Änderung rw, c, g
+      If g > 0 Then rw = InsString(VToS(rw), IIf(c > 1, c & "x", "") & g, " + ")
       g = tmp
       c = 1
      Else
@@ -264,6 +250,7 @@ Wend
 If Operation = 3 Then
   Belegung = rw / IIf(c, c, 1)
  Else 'keine Rechenoperation, da rw hier String
+  If Operation = 4 Then Änderung rw, c, g
   Belegung = rw
 End If
 End Function
@@ -531,4 +518,3 @@ Exit Function
 TASK_MENU:
 zz_Task = What
 End Function
-
